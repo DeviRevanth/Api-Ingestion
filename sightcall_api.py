@@ -66,20 +66,18 @@ class DataFetcher:
             main_df=pd.DataFrame()
             for res in result:main_df=pd.concat([main_df,res])
             self.logger.info(f"{name} count - {main_df.shape[0]}")
-            print(main_df)
  
-            # con=self.engine.connect().execution_options(autocommit=True)
+            con=self.engine.connect().execution_options(autocommit=True)
             try:
                 query=f"TRUNCATE TABLE {self.config['schema_name']}.{name}"
-                # con.execute(query)
+                con.execute(query)
                 self.logger.info(f"{self.config['schema_name']}.{name} has been truncated")
-                # main_df.to_sql(name=name.lower(), schema=self.config["schema_name"], method='multi', chunksize=1500, if_exists='append', con=self.engine, index=False, dtype=self.sqlcol(main_df))
-                main_df.to_csv(os.path.join(parent_path,f"{name}.csv"))
+                main_df.to_sql(name=name.lower(), schema=self.config["schema_name"], method='multi', chunksize=1500, if_exists='append', con=self.engine, index=False, dtype=self.sqlcol(main_df))
                 self.logger.info(f"Data has been ingested to {self.config['schema_name']}.{name}")
             except Exception as e:
                 if 'does not exist' in e:
                     self.logger.info(f"{self.config['schema_name']}.{name} does not exist")
-                    # main_df.to_sql(name=name.lower(), schema=self.config["schema_name"], method='multi', chunksize=1500, if_exists='replace', con=self.engine, index=False, dtype=self.sqlcol(main_df))
+                    main_df.to_sql(name=name.lower(), schema=self.config["schema_name"], method='multi', chunksize=1500, if_exists='replace', con=self.engine, index=False, dtype=self.sqlcol(main_df))
                     self.logger.info(f"Created {self.config['schema_name']}.{name}")
  
 if __name__ == "__main__":
@@ -91,7 +89,7 @@ if __name__ == "__main__":
     log_filename = str(arguments.infile[0].name).split('/')[-1].replace('json', 'log')
     logger = setup_logger(os.path.join(parent_path, log_filename))
     logger.info("Ingestion Started")
-    # conn = get_connection(config["config_path"], config["connection_profile"])
+    conn = get_connection(config["config_path"], config["connection_profile"])
     urllib3.disable_warnings()
     try:
         data_fetcher = DataFetcher(config, '', logger)
