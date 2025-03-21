@@ -1,24 +1,8 @@
 import pandas as pd 
-import boto3
 import argparse
 from datetime import datetime
 import json
 import sys,os
-
-def copy_matching_files(src_path,dest_path,pattern):
-    s3_client = boto3.client('s3')
-    bucket_name = 'odp-us-innovation-ent-raw'
-    directory_prefix = "saas_fusion_s3/test_files/"
-    response = s3_client.list_objects_v2(
-    Bucket = bucket_name,
-    Prefix = directory_prefix,
-    Delimiter='/')
-    for content in response.get("Contents",None):
-        key = content["Key"]
-        if pattern in key:
-            filename = key.split("/")[-1]
-            s3_client.copy_object()
-##Copy Files from landing to processing path
 
 class Validation() :
     def __init__(self,logger) -> None:
@@ -27,52 +11,109 @@ class Validation() :
         self.logger = logger
         try:
             from s3_operations import S3Operations
-            self.s3_session = S3Operations(logger=logger,profile_name=config["s3_profile_name"])
+            self.s3_session :object = S3Operations(logger=logger,profile_name=config["s3_profile_name"])
+            from s3_connector import S3Connector
+            self.s3_connector :object = S3Connector(logger=logger,profile_name=config["s3_profile_name"]).s3_client
             logger.info("S3 Connection Successful")
         except Exception as e :
             logger.error("S3 Connection Failure")
             raise
         try:
             from database_connector import get_connection
-            self.engine = get_connection(filepath = config["db_config_path"],profile= config["db_profile"])
+            self.engine :object  = get_connection(filepath = config["db_config_path"],profile= config["db_profile"])
             logger.info("RDS Connection Successful")
-            self.files_metadata = self.metadata_filenames_fetcher()
-            self.file_names_pattern = self.files_metadata["file_name_pattern"]
+            self.files_metadata :pd.DataFrame  = self.metadata_filenames_fetcher()
+            self.file_names_pattern :list = self.files_metadata["file_name_pattern"]
         except Exception as e:
             logger.error("RDS Connection Failure")
             raise
+
+    @staticmethod
+    def sql_query_to_pandas_dataframe(engine :object ,query :str ,logger :object) -> pd.DataFrame:
+        """
+        """
+        try:
+            df = pd.read_sql(query,engine) 
+            return df
+        except Exception as e:
+            pass
+
+    def column_metadata_validation(self, df :pd.DataFrame, file :str):
+        """
+        """
+        try:
+            stream_id :int= self.files_metadata.loc[self.files_metadata["file_name_pattern"] == file, 'stream_id'].values[0]
+            column_metadata_query = f"""
+            SELECT subquery.src_col_nm FROM (
+            SELECT *, ROW_NUMBER() OVER (
+            PARTITION BY src_col_nm ORDER BY saas_ingstn_field_mapping.created_dt DESC, saas_ingstn_field_mapping.updated_dt DESC) AS rn 
+            FROM fusion_metadata.saas_ingstn_field_mapping 
+            WHERE enable_flg = True AND stream_id = {stream_id} AND src_col_nm IS NOT NULL) 
+            AS subquery WHERE rn = 1;
+            """
+            metadata_dataframe :pd.DataFrame = self.sql_query_to_pandas_dataframe(logger=self.logger, engine=self.engine, query= column_metadata_query)
+            metadata_columns :set = set(metadata_dataframe["src_col_nm"]) 
+            source_columns :set = set(pd.Series(df.columns).str.lower())
+            validation :bool= metadata_columns == source_columns
+            if validation == True:
+                pass
+            else:
+                pass
+        except Exception as e:
+            pass
 
     def source_file_fetcher(self):
         """
         """
         try:
             for file in self.file_names_pattern:
-                self.s3_session.list_files(bucket=config["s3_bucket_name"],prefix=config["s3_prefix_name"],file_name=file)
+                s3_response = self.s3_connector.list_objects_v2(Bucket = config["s3_bucket_name"],Prefix= config["s3_prefix_name"], Delimiter='/')
+                contents = s3_response.get("Contents",None)
+                if contents:
+                    for content in contents:
+                        key = content.get("Key",None)
+                        if key:
+                            if file in key:
+                                file_extension = key.split("/")[-1]
+                                file_type = "text" if file_extension == "txt" else file_extension
+                                if file_extension == "xlsx":
+                                    file_type = "excel"
+                                data_frame = self.s3_session.getobject_s3(bucket_name=config["s3_bucket_name"],key= key ,file_type=file_type)
+                                self.column_metadata_validation(df=data_frame,file = file)
+                        else:
+                            raise KeyError("")
+                else:
+                    raise KeyError("")
+        except Exception as e:
+            self.logger.error()
+            raise
 
-        except Exception as e:pass
-    def metadata_filenames_fetcher(self):
+    def metadata_filenames_fetcher(self) -> pd.DataFrame:
         """
         """
         try :
             query = f"""
-            select subquery.stream_id,subquery.stream_name,subquery.file_name_pattern,subquery.processing_path,subquery.rejected_path from (
+            SELECT subquery.stream_id,subquery.stream_name,subquery.file_name_pattern,subquery.processing_path,subquery.rejected_path FROM (
             SELECT *, ROW_NUMBER() OVER (
             PARTITION BY stream_id ORDER BY saas_ingstn_stream_control.created_dt DESC, saas_ingstn_stream_control.updated_dt DESC) AS rn 
             FROM fusion_metadata.saas_ingstn_stream_control 
             WHERE enable_flg = True) 
-            AS subquery where rn = 1;
+            AS subquery WHERE rn = 1;
             """
-            required_files_metadata = pd.read_sql(query)
-            return required_files_metadata
-        except Exception as e:pass
+            required_files_metadata :pd.DataFrame = self.sql_query_to_pandas_dataframe(logger=self.logger, engine=self.engine, query= query)
+            return required_files_metadata 
+        except Exception as e:
+            self.logger.error("")
+            raise
 
-
-    def column_names_metadata_fetcher(self):
+    def log_metadata_files_fetcher(self, df :pd.DataFrame, ) -> pd.DataFrame:
         """
         """
         try:
-            query = None
-        except Exception as e:pass
+            query = f"""SELECT load_status,error_code from fusion_log.saas_ingstn_log WHERE stream_id = {}"""
+        except Exception as e:
+            pass
+        pass
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -86,7 +127,10 @@ if __name__ == "__main__":
     log_path = os.path.join(config["log_file"],log_filename)
     logger = setup_logger(log_path)
     try:
-        logger.info("Saas Fusion NRT Validation Execution Started")
+        logger.info("NRT Saas Fusion Validation Execution Started")
+        Validation(logger=logger)
+        sys.exit(0)
+        logger.info("NRT Saas Fusion Validation completed")
     except Exception as e:
         print(f"Error Connecting to the database:{e}")
 
