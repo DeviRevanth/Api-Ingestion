@@ -28,7 +28,7 @@ def sql_query_executor(engine :object, logger :object, query: str) -> Union[pd.D
     if not query or not isinstance(query, str):
         raise ValueError("Query must be a non-empty string.")
     try:
-        if query.strip().upper().startswith(("INSERT", "UPDATE", "DO")):
+        if query.strip().upper().startswith(("INSERT", "UPDATE")):
             engine.execute(query)
             logger.info(f"SQL Query execution successful")
             return None
