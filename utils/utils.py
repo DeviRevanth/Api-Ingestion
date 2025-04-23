@@ -87,7 +87,7 @@ def send_email_notification(subject :str, message :str, logger :object, log_path
         files_to_attach :list= attachments or []
         if log_path:
             files_to_attach.append(log_path)
-        if is_html: # Use sendmail for HTML emails
+        if is_html: # sendmail for HTML emails
             msg = MIMEMultipart()
             msg["To"] = recipients
             msg["Subject"] = subject
@@ -106,7 +106,7 @@ def send_email_notification(subject :str, message :str, logger :object, log_path
                         msg.attach(part)
             subprocess.run(["/usr/sbin/sendmail", "-t", "-oi"], input=msg.as_string().encode(), check=True)
             logger.info("HTML email with attachments sent successfully using sendmail.")
-        else: # Use mailx for plain text
+        else: # mailx for plain text
             if log_path:
                 os.system(f"""echo "{message}" | mailx -s "{subject}" -a {log_path}  {recipients}""")
             else:
